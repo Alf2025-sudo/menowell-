@@ -3,7 +3,11 @@ import os
 import json
 from pathlib import Path
 from typing import Literal
+import secrets
 
+
+from fastapi import Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from app.database import initialise_database, get_connection
 from datetime import datetime
@@ -33,6 +37,36 @@ app = FastAPI(
     description="A privacy-conscious male reproductive health education and early-assessment prototype.",
     version="0.1.0",
 )
+
+# Administrator authentication
+admin_security = HTTPBearer(auto_error=False)
+
+
+async def verify_admin_token(
+    credentials: HTTPAuthorizationCredentials = Depends(admin_security)
+):
+    expected_token = os.getenv("ADMIN_ACCESS_TOKEN")
+
+    if not expected_token:
+        raise HTTPException(
+            status_code=503,
+            detail="Administrator authentication is not configured."
+        )
+
+    if (
+        credentials is None
+        or credentials.scheme.lower() != "bearer"
+        or not secrets.compare_digest(
+            credentials.credentials,
+            expected_token
+        )
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Administrator authentication required."
+        )
+
+    return True
 
 @app.on_event("startup")
 async def startup_event():
@@ -394,7 +428,9 @@ async def create_appointment_request(data: AppointmentRequestInput):
 
 
 @app.get("/api/admin/appointment-requests")
-async def get_all_appointment_requests():
+async def get_all_appointment_requests(
+    authenticated: bool = Depends(verify_admin_token)
+):
     """
     Demonstration admin endpoint.
     Retrieves appointment requests stored in the local SQLite database.
@@ -440,7 +476,8 @@ class AppointmentStatusUpdate(BaseModel):
 @app.patch("/api/admin/appointment-requests/{reference_number}")
 async def update_appointment_status(
     reference_number: str,
-    update: AppointmentStatusUpdate
+    update: AppointmentStatusUpdate,
+    authenticated: bool = Depends(verify_admin_token)
 ):
     """
     Updates the status of a demonstration appointment request.
